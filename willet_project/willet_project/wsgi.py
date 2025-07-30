@@ -1,9 +1,8 @@
 import os
 from django.core.wsgi import get_wsgi_application
 
-# Définit la variable d'environnement DJANGO_SETTINGS_MODULE qui indique à Django
-# quel fichier de configuration utiliser (ici 'willet_project.settings')
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'willet_project.settings')
+# Indique à Django d’utiliser la configuration de développemeos.environ.setdefault('DJANGO_SETTINGS_MODULE', 'willet_config')
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.dev')
 
-# Crée et expose l'application WSGI Django (un callable Python que le serveur web utilise)
+
 application = get_wsgi_application()

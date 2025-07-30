@@ -1,3 +1,4 @@
+ 
 from .base import *  # On importe toute la configuration commune
 
 # Activer le mode debug pour afficher les erreurs détaillées

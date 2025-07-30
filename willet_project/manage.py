@@ -6,7 +6,8 @@ import sys
 
 def main():
     """Run administrative tasks."""
-    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'willet_project.settings')
+    # Indiquer le module de configuration à utiliser (ici config/dev.py)
+    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.dev')
     try:
         from django.core.management import execute_from_command_line
     except ImportError as exc:

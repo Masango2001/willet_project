@@ -1,4 +1,3 @@
- 
 from django.urls import path
 from .views.balance import BalanceView
 from .views.send import SendBitcoinView

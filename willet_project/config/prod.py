@@ -1,3 +1,4 @@
+ 
 from .base import *  # Importer toute la configuration commune
 
 # Mode production : désactiver le debug
