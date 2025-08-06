@@ -108,9 +108,11 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 CORS_ALLOW_ALL_ORIGINS = True  # À ajuster en production
 
 # Configuration Bitcoin RPC (variables sensibles à définir dans .env)
-BITCOIN_RPC_USER = os.getenv('BITCOIN_RPC_USER')
-BITCOIN_RPC_PASSWORD = os.getenv('BITCOIN_RPC_PASSWORD')
+BITCOIN_RPC_USER = os.getenv('BITCOIN_RPC_USER','masango')
+BITCOIN_RPC_PASSWORD = os.getenv('BITCOIN_RPC_PASSWORD','masango2')
 BITCOIN_RPC_URL = os.getenv('BITCOIN_RPC_URL')
+BITCOIN_RPC_HOST = os.getenv('BITCOIN_RPC_HOST','127.0.0.1')
+BITCOIN_RPC_PORT = os.getenv('BITCOIN_RPC_PORT','8332')
 
 # Configuration JWT Simple
 SIMPLE_JWT = {
