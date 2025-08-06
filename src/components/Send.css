@@ -1,0 +1,87 @@
+.send-container {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #2d1b69 0%, #11073a 100%);
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  padding: 20px;
+}
+
+.send-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 30px;
+  padding: 0 5px;
+}
+
+.back-btn {
+  background: rgba(60, 60, 80, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: white;
+  transition: all 0.3s ease;
+}
+
+.back-btn:hover {
+  background: rgba(79, 172, 254, 0.2);
+  border-color: #4facfe;
+  transform: translateX(-2px);
+}
+
+.send-title {
+  color: white;
+  font-size: 24px;
+  font-weight: 600;
+  margin: 0;
+  text-align: center;
+  flex: 1;
+}
+
+.send-form {
+  background: rgba(60, 60, 80, 0.9);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 24px;
+  padding: 30px;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.recipient-section,
+.amount-section,
+.fee-section {
+  margin-bottom: 30px;
+}
+
+.form-label {
+  display: block;
+  color: #a0a0a0;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.input-with-actions {
+  position: relative;
+}
+
+.form-input {
+  width: 100%;
+  padding: 18px;
+  background: rgba(40, 40, 60, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  color: white;
+  font-size: 16px;
+  outline: none;
+    transition: all 0.3s ease;
+    box-sizing: border-box;
+  }
