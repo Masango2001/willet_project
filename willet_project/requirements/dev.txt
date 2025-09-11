@@ -1,0 +1,5 @@
+ -r base.txt
+
+django-debug-toolbar==4.4.6
+python-bitcoinrpc==1.0
+colorama==0.4.6
