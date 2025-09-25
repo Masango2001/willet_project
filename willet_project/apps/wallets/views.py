@@ -2,58 +2,37 @@ from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from .models import Wallet, UTXO
 from .serializers import WalletSerializer, UTXOSerializer
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.hazmat.primitives import serialization
 from bitcoinrpc.authproxy import JSONRPCException
-from bitcoin.bitcoinrpc import get_rpc_connection  # Importation depuis bitcoin/bitcoinrpc
+from bitcoin.bitcoinrpc import get_rpc_connection
+
 
 class WalletListCreateView(generics.ListCreateAPIView):
     """
-    Vue pour lister tous les portefeuilles et créer un nouveau portefeuille.
+    Vue pour lister tous les portefeuilles et créer un nouveau portefeuille Bitcoin.
     """
     queryset = Wallet.objects.all()
     serializer_class = WalletSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        # Créer un nouveau wallet pour l'utilisateur
+        wallet = Wallet(user=request.user, balance=0)
 
-        # Génération des clés
-        wallet = Wallet()
-        self.generate_keys(wallet)  # Appel à la méthode pour générer les clés
-        wallet.user = request.user  # Associer le portefeuille à l'utilisateur
-
-        # Créer une nouvelle adresse Bitcoin via RPC
+        # Générer une nouvelle adresse Bitcoin via RPC
         try:
-            rpc_connection = get_rpc_connection()  # Obtenir la connexion RPC
-            bitcoin_address = rpc_connection.getnewaddress()  # Crée une nouvelle adresse
-            wallet.public_key = bitcoin_address  # Associe l'adresse à la clé publique
+            rpc_connection = get_rpc_connection()
+            bitcoin_address = rpc_connection.getnewaddress()  # Nouvelle adresse Bitcoin
+            wallet.public_key = bitcoin_address  # Stocker l'adresse dans le champ public_key
         except JSONRPCException as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        # Enregistrer le portefeuille
+        # Enregistrer le wallet
         wallet.save()
 
+        # Retourner les données via le serializer
+        serializer = self.get_serializer(wallet)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-    def generate_keys(self, wallet):
-        """Générer une paire de clés RSA et les associer au portefeuille."""
-        private_key = rsa.generate_private_key(
-            public_exponent=65537,
-            key_size=2048,
-        )
-        public_key = private_key.public_key()
-
-        wallet.private_key = private_key.private_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PrivateFormat.TraditionalOpenSSL
-        ).decode('utf-8')
-
-        wallet.public_key = public_key.public_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PublicFormat.SubjectPublicKeyInfo
-        ).decode('utf-8')
 
 class WalletRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
     """
@@ -70,9 +49,10 @@ class WalletRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
         self.perform_update(serializer)
         return Response(serializer.data)
 
+
 class WalletUTXOListView(generics.ListAPIView):
     """
-    Vue pour lister tous les UTXOs d'un portefeuille spécifique.
+    Vue pour lister tous les UTXOs d'un portefeuille Bitcoin.
     """
     serializer_class = UTXOSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -81,10 +61,20 @@ class WalletUTXOListView(generics.ListAPIView):
         wallet_id = self.kwargs['wallet_id']
         wallet = Wallet.objects.get(id=wallet_id)
 
-        # Récupération des UTXOs via RPC
         try:
-            rpc_connection = get_rpc_connection()  # Obtenir la connexion RPC
-            utxos = rpc_connection.listunspent(0, 9999999, [wallet.public_key])  # Récupérer les UTXOs de l'adresse
-            return utxos  # Vous devrez peut-être les convertir en un format approprié
+            rpc_connection = get_rpc_connection()
+            utxos = rpc_connection.listunspent(0, 9999999, [wallet.public_key])
+
+            # Convertir les UTXOs RPC en objets Django temporaires pour le serializer
+            utxo_objects = []
+            for utxo in utxos:
+                utxo_objects.append(UTXO(
+                    wallet=wallet,
+                    txid=utxo['txid'],
+                    output_index=utxo['vout'],
+                    amount=int(utxo['amount'] * 1e8),  # convertir en satoshis
+                    spent=False
+                ))
+            return utxo_objects
         except JSONRPCException as e:
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return []

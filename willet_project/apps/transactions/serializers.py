@@ -4,60 +4,60 @@ from .models import Transaction, TransactionInput, TransactionOutput
 class TransactionOutputSerializer(serializers.ModelSerializer):
     class Meta:
         model = TransactionOutput
-        fields = ['id', 'address', 'amount']
+        fields = ['id', 'address', 'amount', 'spent']
+
 
 class TransactionInputSerializer(serializers.ModelSerializer):
+    utxo_amount = serializers.IntegerField(source='utxo.amount', read_only=True)
+    utxo_txid = serializers.CharField(source='utxo.txid', read_only=True)
+    
     class Meta:
         model = TransactionInput
-        fields = ['id', 'utxo']
+        fields = ['id', 'utxo', 'utxo_txid', 'utxo_amount']
+
 
 class TransactionSerializer(serializers.ModelSerializer):
     inputs = TransactionInputSerializer(many=True, required=False)
     outputs = TransactionOutputSerializer(many=True, required=False)
+    fee = serializers.IntegerField(read_only=True)
+    status = serializers.CharField(read_only=True)
+    timestamp = serializers.DateTimeField(read_only=True)
 
     class Meta:
         model = Transaction
-        fields = ['id', 'sender_utxo', 'recipient_address', 'amount', 'timestamp', 'status', 'inputs', 'outputs']
+        fields = [
+            'id',
+            'sender_utxo',
+            'recipient_address',
+            'amount',
+            'fee',
+            'txid',
+            'status',
+            'timestamp',
+            'inputs',
+            'outputs'
+        ]
 
     def create(self, validated_data):
         inputs_data = validated_data.pop('inputs', [])
         outputs_data = validated_data.pop('outputs', [])
-        
+
         transaction = Transaction.objects.create(**validated_data)
-        
-        for input_data in inputs_data:
-            TransactionInput.objects.create(transaction=transaction, **input_data)
-        
-        for output_data in outputs_data:
-            TransactionOutput.objects.create(transaction=transaction, **output_data)
-        
+
+        for inp in inputs_data:
+            TransactionInput.objects.create(transaction=transaction, **inp)
+        for out in outputs_data:
+            TransactionOutput.objects.create(transaction=transaction, **out)
+
+        # recalculer les frais après création des inputs/outputs
+        transaction.fee = transaction.calculate_fee()
+        transaction.save()
         return transaction
 
     def update(self, instance, validated_data):
-        inputs_data = validated_data.pop('inputs', [])
-        outputs_data = validated_data.pop('outputs', [])
-
-        # Update fields of the transaction itself
-        instance.sender_utxo = validated_data.get('sender_utxo', instance.sender_utxo)
-        instance.recipient_address = validated_data.get('recipient_address', instance.recipient_address)
-        instance.amount = validated_data.get('amount', instance.amount)
-        instance.status = validated_data.get('status', instance.status)
+        # Mettre à jour fields simples
+        for attr, value in validated_data.items():
+            if attr not in ['inputs', 'outputs']:
+                setattr(instance, attr, value)
         instance.save()
-
-        # Handle inputs
-        for input_data in inputs_data:
-            TransactionInput.objects.update_or_create(
-                transaction=instance,
-                utxo=input_data.get('utxo'),
-                defaults=input_data
-            )
-
-        # Handle outputs
-        for output_data in outputs_data:
-            TransactionOutput.objects.update_or_create(
-                transaction=instance,
-                address=output_data.get('address'),
-                defaults=output_data
-            )
-
         return instance
