@@ -3,11 +3,11 @@ from .views import WalletListCreateView, WalletRetrieveUpdateDestroyView, Wallet
 
 urlpatterns = [
     # Lister tous les wallets et créer un nouveau wallet Bitcoin
-    path('wallets/', WalletListCreateView.as_view(), name='wallet-list-create'),
+    path('', WalletListCreateView.as_view(), name='wallet-list-create'),
 
     # Récupérer, mettre à jour ou supprimer un wallet spécifique
-    path('wallets/<int:pk>/', WalletRetrieveUpdateDestroyView.as_view(), name='wallet-retrieve-update-destroy'),
+    path('<int:pk>/', WalletRetrieveUpdateDestroyView.as_view(), name='wallet-retrieve-update-destroy'),
 
     # Lister les UTXOs d'un wallet spécifique
-    path('wallets/<int:wallet_id>/utxos/', WalletUTXOListView.as_view(), name='wallet-utxo-list'),
+    path('utxos/', WalletUTXOListView.as_view(), name='wallet-utxo-list'),
 ]
