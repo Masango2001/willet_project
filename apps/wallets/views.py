@@ -63,15 +63,22 @@ class WalletBalance(APIView):
 
     def post(self, request):
         wallet_id = request.data.get('wallet_id')
-        if not wallet_id:
-            return Response({"error": "wallet_id is required"}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            wallet = Wallet.objects.get(id=wallet_id, user=request.user)
-        except Wallet.DoesNotExist:
-            return Response({"error": "Wallet not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if wallet_id:
+            try:
+                wallet = Wallet.objects.get(id=wallet_id, user=request.user)
+            except Wallet.DoesNotExist:
+                return Response({"error": "Wallet not found"}, status=status.HTTP_404_NOT_FOUND)
+        else:
+            try:
+                wallet = Wallet.objects.get(user=request.user, is_default=True)
+            except Wallet.DoesNotExist:
+                return Response({"error": "No default wallet found"}, status=status.HTTP_404_NOT_FOUND)
+
         return Response({
             "wallet": wallet.name,
-            "onchain_balance": wallet.onchain_balance,
+            "onchain_balance": wallet.onchain_balance(),  # ⚡ appeler la méthode
             "lightning_balance": wallet.lightning_balance,
             "total_balance": wallet.total_balance()
         })
+
