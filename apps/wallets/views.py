@@ -12,13 +12,27 @@ class WalletCreate(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        # Création du wallet Django (sans onchain_balance)
         wallet = Wallet.objects.create(user=request.user)
-        btc_wallet = BTCWallet.create(name=f"user-{request.user.id}-{wallet.id}")
+        
+        # Création du wallet Bitcoin Testnet
+        btc_wallet = BTCWallet.create(
+            name=f"user-{request.user.id}-{wallet.id}",
+            network='testnet'
+        )
+        
+        # Récupération de l'adresse et de la clé WIF
         wallet.current_address = btc_wallet.get_key().address
-        wallet.private_key = btc_wallet.get_key().wif  # sera chiffrée automatiquement dans save()
+        wallet.private_key = btc_wallet.get_key().wif  # sera chiffrée dans save()
         wallet.save()
-        return Response(WalletSerializer(wallet).data, status=status.HTTP_201_CREATED)
+        
+        # Retour des données avec solde calculé
+        data = WalletSerializer(wallet).data
+        data['onchain_balance'] = str(wallet.onchain_balance())  # ⚡ méthode
+        data['total_balance'] = str(wallet.total_balance())
 
+        return Response(data, status=status.HTTP_201_CREATED)
+    
 # --- Détails / mise à jour / suppression ---
 class WalletDetail(APIView):
     permission_classes = [IsAuthenticated]
@@ -64,6 +78,7 @@ class WalletBalance(APIView):
     def post(self, request):
         wallet_id = request.data.get('wallet_id')
 
+        # Récupération du wallet (par ID ou wallet par défaut)
         if wallet_id:
             try:
                 wallet = Wallet.objects.get(id=wallet_id, user=request.user)
@@ -75,10 +90,21 @@ class WalletBalance(APIView):
             except Wallet.DoesNotExist:
                 return Response({"error": "No default wallet found"}, status=status.HTTP_404_NOT_FOUND)
 
+        # --- Synchronisation Testnet ---
+        try:
+            btc_wallet = BTCWallet(wallet.name)  # ouvre le wallet Bitcoin Testnet
+            btc_wallet.utxos_update()            # récupère les UTXOs non dépensés Testnet
+        except Exception as e:
+            return Response({"error": f"Bitcoinlib wallet sync failed: {str(e)}"},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # Calcul du solde onchain dynamiquement depuis les UTXOs
+        onchain_balance = wallet.onchain_balance()
+
         return Response({
             "wallet": wallet.name,
-            "onchain_balance": wallet.onchain_balance(),  # ⚡ appeler la méthode
-            "lightning_balance": wallet.lightning_balance,
-            "total_balance": wallet.total_balance()
+            "current_address": wallet.current_address,
+            "onchain_balance": str(onchain_balance),
+            "lightning_balance": str(wallet.lightning_balance),
+            "total_balance": str(wallet.total_balance()),
         })
-
