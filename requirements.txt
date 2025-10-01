@@ -1,0 +1,13 @@
+Django==5.2.4
+djangorestframework==3.16.0
+djangorestframework_simplejwt==5.5.0
+python-dotenv==1.1.1
+sqlparse==0.5.3
+tzdata==2025.2
+django-cors-headers==4.3.1
+reportlab>=4.0.8 
+cryptography
+django-debug-toolbar==4.4.6
+python-bitcoinrpc==1.0
+colorama==0.4.6
+drf-yasg
