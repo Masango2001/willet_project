@@ -1,12 +1,12 @@
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
-from django.contrib.auth import authenticate
 from rest_framework_simplejwt.tokens import RefreshToken
-from bitcoin.bitcoinrpc import get_rpc_connection
-from .models import CustomerUser
 from apps.wallets.models import Wallet
-import secrets
+from .models import CustomerUser
 from .serializers import CustomerUserSerializer, LoginSerializer
+import secrets
+from decimal import Decimal
+from bitcoinlib.wallets import Wallet as BTCWallet
 
 class CustomerUserCreateView(generics.CreateAPIView):
     queryset = CustomerUser.objects.all()
@@ -18,21 +18,31 @@ class CustomerUserCreateView(generics.CreateAPIView):
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
 
-        # Génération d'une clé privée (ici un hex aléatoire 64 caractères)
+        # Génération d'une clé privée (hex aléatoire 64 caractères)
         private_key = secrets.token_hex(32)  
 
+        # Création du wallet Testnet dans Bitcoinlib
+        btc_wallet_name = f"user-{user.id}-default-wallet"
         try:
-            rpc = get_rpc_connection()
-            new_address = rpc.getnewaddress()
+            btc_wallet = BTCWallet.create(
+                name=btc_wallet_name,
+                keys=private_key,
+                network='testnet'
+            )
         except Exception as e:
             user.delete()
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response(
+                {"error": f"Bitcoinlib wallet creation failed: {str(e)}"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
-        # Création du wallet par défaut AVEC clé privée chiffrée
+        # Création du wallet par défaut dans Django (sans onchain_balance !)
         default_wallet = Wallet.objects.create(
             user=user,
-            current_address=new_address,
-            private_key=private_key,  # ⚡ sera auto-chiffrée via save()
+            name=btc_wallet_name,
+            current_address=btc_wallet.get_key().address,
+            private_key=private_key,  # sera auto-chiffrée via save()
+            lightning_balance=0.0,
             is_default=True
         )
 
@@ -45,13 +55,12 @@ class CustomerUserCreateView(generics.CreateAPIView):
                 "id": default_wallet.id,
                 "name": default_wallet.name,
                 "current_address": default_wallet.current_address,
-                "onchain_balance": str(default_wallet.onchain_balance),
+                "onchain_balance": str(default_wallet.onchain_balance()),  # ⚡ appeler la méthode
                 "lightning_balance": str(default_wallet.lightning_balance),
             },
             "refresh": str(refresh),
             "access": str(refresh.access_token),
         }, status=status.HTTP_201_CREATED)
-
 
 class CustomerUserListView(generics.ListAPIView):
     queryset = CustomerUser.objects.all()
