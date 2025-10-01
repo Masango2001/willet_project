@@ -1,0 +1,25 @@
+# Fichiers d’environnement
+.env
+
+# Base SQLite
+*.sqlite3
+
+# Dossiers Python
+__pycache__/
+*.py[cod]
+
+# Cache Django
+*.log
+*.pot
+*.pyc
+*.pyo
+*.pyd
+
+# JetBrains / VSCode / etc.
+.idea/
+.vscode/
+
+# Fichiers de migration
+*/migrations/__pycache__/
+*/migrations/*.py
+!*/migrations/__init__.py
