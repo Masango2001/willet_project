@@ -5,7 +5,6 @@ from apps.wallets.models import Wallet
 from .models import CustomerUser
 from .serializers import CustomerUserSerializer, LoginSerializer
 import secrets
-from decimal import Decimal
 from bitcoinlib.wallets import Wallet as BTCWallet
 
 class CustomerUserCreateView(generics.CreateAPIView):
@@ -18,8 +17,8 @@ class CustomerUserCreateView(generics.CreateAPIView):
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
 
-        # Génération d'une clé privée (hex aléatoire 64 caractères)
-        private_key = secrets.token_hex(32)  
+        # Génération d'une clé privée aléatoire (64 caractères hex)
+        private_key = secrets.token_hex(32)
 
         # Création du wallet Testnet dans Bitcoinlib
         btc_wallet_name = f"user-{user.id}-default-wallet"
@@ -32,19 +31,20 @@ class CustomerUserCreateView(generics.CreateAPIView):
         except Exception as e:
             user.delete()
             return Response(
-                {"error": f"Bitcoinlib wallet creation failed: {str(e)}"}, 
+                {"error": f"Bitcoinlib wallet creation failed: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-        # Création du wallet par défaut dans Django (sans onchain_balance !)
+        # Création du wallet Django
         default_wallet = Wallet.objects.create(
             user=user,
             name=btc_wallet_name,
             current_address=btc_wallet.get_key().address,
-            private_key=private_key,  # sera auto-chiffrée via save()
+            private_key=private_key,  # sera auto-chiffrée dans save()
             lightning_balance=0.0,
             is_default=True
         )
+        # ⚡ onchain_balance n’est pas stocké en DB, il est calculé via la méthode onchain_balance()
 
         # Génération du token JWT
         refresh = RefreshToken.for_user(user)
@@ -55,12 +55,13 @@ class CustomerUserCreateView(generics.CreateAPIView):
                 "id": default_wallet.id,
                 "name": default_wallet.name,
                 "current_address": default_wallet.current_address,
-                "onchain_balance": str(default_wallet.onchain_balance()),  # ⚡ appeler la méthode
+                "onchain_balance": str(default_wallet.onchain_balance()),  # méthode dynamique
                 "lightning_balance": str(default_wallet.lightning_balance),
             },
             "refresh": str(refresh),
             "access": str(refresh.access_token),
         }, status=status.HTTP_201_CREATED)
+
 
 class CustomerUserListView(generics.ListAPIView):
     queryset = CustomerUser.objects.all()
