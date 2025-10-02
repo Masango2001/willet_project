@@ -1,131 +1,120 @@
-# views.py
-from rest_framework import generics, status, permissions
+# apps/transactions/views.py
+from rest_framework.views import APIView
 from rest_framework.response import Response
-from bitcoinrpc.authproxy import JSONRPCException
+from rest_framework.permissions import IsAuthenticated
+from django.shortcuts import get_object_or_404
+from bitcoinlib.wallets import Wallet as BTCWallet
+from decimal import Decimal
 
 from .models import Transaction, TransactionInput, TransactionOutput
-from apps.wallets.models import UTXO
 from .serializers import TransactionSerializer
-from bitcoin.bitcoinrpc import get_rpc_connection  # Fonction RPC Bitcoin
+from apps.wallets.models import Wallet, UTXO
+from .utils import sync_wallet
 
 
-# --- Vue pour lister et créer des transactions ---
-class TransactionListCreateView(generics.ListCreateAPIView):
-    queryset = Transaction.objects.all()
-    serializer_class = TransactionSerializer
-    permission_classes = [permissions.IsAuthenticated]
+class SendTransactionView(APIView):
+    """
+    Envoie des BTC depuis un wallet vers une adresse.
+    Crée la transaction locale et synchronise les UTXOs.
+    Permet d'envoyer plusieurs fois à la même adresse.
+    """
+    permission_classes = [IsAuthenticated]
 
-    def create(self, request, *args, **kwargs):
-        """
-        Création d'une transaction Bitcoin :
-        - Vérifie solde du UTXO
-        - Crée + signe + envoie la transaction via Bitcoin Core
-        - Calcule les frais et le change
-        - Met à jour UTXO + enregistre transaction/inputs/outputs
-        """
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        validated_data = serializer.validated_data
+    def post(self, request):
+        wallet_id = request.data.get("wallet_id")
+        to_address = request.data.get("to_address")
+        amount = Decimal(request.data.get("amount"))
 
-        sender_utxo = validated_data['sender_utxo']
-        recipient_address = validated_data['recipient_address']
-        amount = validated_data['amount']
-
-        # Vérification que le UTXO n'est pas déjà dépensé
-        if sender_utxo.spent:
-            return Response({"error": "UTXO déjà dépensé"}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Vérification du solde
-        if sender_utxo.amount < amount:
-            return Response({"error": "Solde insuffisant"}, status=status.HTTP_400_BAD_REQUEST)
+        wallet = get_object_or_404(Wallet, id=wallet_id, user=request.user)
 
         try:
-            rpc_connection = get_rpc_connection()
+            btc_wallet = BTCWallet(wallet.name)
 
-            # --- Préparer la sortie principale ---
-            outputs = {recipient_address: amount / 1e8}  # en BTC
+            # Envoi réel sur le réseau (testnet ou mainnet)
+            tx = btc_wallet.send_to(to_address, int(amount * Decimal("1e8")))  # satoshis
 
-            # --- Calcul du change (si montant restant > 0) ---
-            change_amount = sender_utxo.amount - amount
-            if change_amount > 0:
-                # Renvoyer le change à l'adresse propriétaire du UTXO
-                outputs[sender_utxo.address] = change_amount / 1e8
-
-            # --- Créer la transaction brute ---
-            raw_tx = rpc_connection.createrawtransaction(
-                [{"txid": sender_utxo.txid, "vout": sender_utxo.output_index}],
-                outputs
+            # Création de la transaction locale
+            transaction = Transaction.objects.create(
+                wallet=wallet,
+                txid=tx.txid,
+                amount=amount,
+                to_address=to_address,
+                fee=Decimal(tx.fee) / Decimal("1e8"),
+                status="broadcasted"
             )
 
-            # --- Signer la transaction ---
-            signed_tx = rpc_connection.signrawtransactionwithwallet(raw_tx)
-            if not signed_tx.get("complete", False):
-                return Response({"error": "Impossible de signer la transaction"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            # Inputs de la transaction
+            for inp in tx.inputs:
+                # Récupérer txid en hex
+                txid_hex = getattr(inp, "txid", None)
+                if not txid_hex:
+                    txid_bytes = getattr(inp, "txid_as_bytes", None)
+                    if txid_bytes:
+                        txid_hex = txid_bytes.hex()
+                    else:
+                        continue  # skip si pas de txid
 
-            # --- Diffuser la transaction ---
-            txid = rpc_connection.sendrawtransaction(signed_tx["hex"])
+                # Récupérer vout et convertir si nécessaire
+                vout = getattr(inp, "output_n", None)
+                if isinstance(vout, bytes):
+                    vout = int.from_bytes(vout, byteorder="little")
 
-            # --- Récupérer info pour les frais ---
-            tx_info = rpc_connection.decoderawtransaction(signed_tx["hex"])
-            vsize = tx_info.get("vsize", 200)  # taille estimée
-            feerate = rpc_connection.estimatesmartfee(6)["feerate"]  # BTC/kB
-            fee = int(vsize * feerate * 1e5)  # conversion → satoshis
+                utxo = UTXO.objects.filter(txid=txid_hex, vout=vout).first()
+                if utxo:
+                    TransactionInput.objects.create(
+                        transaction=transaction,
+                        utxo=utxo,
+                        amount=Decimal(inp.value) / Decimal("1e8")
+                    )
+                    # Marquer l'UTXO comme dépensé
+                    utxo.spent = True
+                    utxo.save()
 
-        except JSONRPCException as e:
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            # Outputs de la transaction
+            for out in tx.outputs:
+                TransactionOutput.objects.create(
+                    transaction=transaction,
+                    address=out.address,
+                    amount=Decimal(out.value) / Decimal("1e8")
+                )
 
-        # --- Mettre à jour l'UTXO source ---
-        sender_utxo.spent = True
-        sender_utxo.save()
+            # 🔄 Synchronisation du wallet après envoi
+            sync_wallet(wallet)
 
-        # --- Créer l'objet Transaction ---
-        transaction = Transaction.objects.create(
-            sender_utxo=sender_utxo,
-            recipient_address=recipient_address,
-            amount=amount,
-            fee=fee,
-            txid=txid,
-            status="pending"
-        )
+            return Response(TransactionSerializer(transaction).data, status=201)
 
-        # --- Inputs ---
-        TransactionInput.objects.create(transaction=transaction, utxo=sender_utxo)
-
-        # --- Output destinataire ---
-        TransactionOutput.objects.create(transaction=transaction, address=recipient_address, amount=amount)
-
-        # --- Output change (si applicable) ---
-        if change_amount > 0:
-            TransactionOutput.objects.create(transaction=transaction, address=sender_utxo.address, amount=change_amount)
-
-        return Response(TransactionSerializer(transaction).data, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            return Response({"error": str(e)}, status=500)
 
 
-# --- Vue pour récupérer une transaction ---
-class TransactionRetrieveView(generics.RetrieveAPIView):
-    queryset = Transaction.objects.all()
-    serializer_class = TransactionSerializer
-    permission_classes = [permissions.IsAuthenticated]
+class WalletSyncView(APIView):
+    """
+    Synchronise les UTXOs d'un wallet et met à jour le solde onchain.
+    """
+    permission_classes = [IsAuthenticated]
 
-    def retrieve(self, request, *args, **kwargs):
-        """
-        Récupère une transaction en base
-        + met à jour son statut via Bitcoin Core.
-        """
-        transaction = self.get_object()
-        serializer = self.get_serializer(transaction)
+    def post(self, request):
+        wallet_id = request.data.get("wallet_id")
+        wallet = get_object_or_404(Wallet, id=wallet_id, user=request.user)
 
         try:
-            rpc_connection = get_rpc_connection()
-            tx_info = rpc_connection.gettransaction(transaction.txid)
-            confirmations = tx_info.get("confirmations", 0)
+            utxos = sync_wallet(wallet)
+        except Exception as e:
+            return Response({"error": str(e)}, status=500)
 
-            if confirmations > 0 and transaction.status != "confirmed":
-                transaction.status = "confirmed"
-                transaction.save()
-
-        except JSONRPCException:
-            # Si la transaction n’existe pas encore sur le réseau
-            pass
-
-        return Response(serializer.data)
+        return Response({
+            "wallet": wallet.name,
+            "onchain_balance": str(wallet.onchain_balance()),
+            "total_balance": str(wallet.total_balance()),
+            "utxos": [
+                {
+                    "txid": u.txid,
+                    "vout": u.vout,
+                    "amount": str(u.amount),
+                    "spent": u.spent,
+                    "confirmations": u.confirmations,
+                    "script_pub_key": u.script_pub_key or ""
+                }
+                for u in utxos
+            ]
+        })

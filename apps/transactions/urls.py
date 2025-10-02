@@ -1,10 +1,8 @@
+# apps/transactions/urls.py
 from django.urls import path
-from .views import TransactionListCreateView, TransactionRetrieveView
+from .views import SendTransactionView, WalletSyncView
 
 urlpatterns = [
-    # Liste toutes les transactions ou création d'une nouvelle
-    path('', TransactionListCreateView.as_view(), name='transaction-list-create'),
-
-    # Récupérer une transaction précise par son ID
-    path('<int:pk>/', TransactionRetrieveView.as_view(), name='transaction-detail'),
+    path("send/", SendTransactionView.as_view(), name="send_transaction"),
+    path("sync/", WalletSyncView.as_view(), name="wallet_sync"),
 ]
