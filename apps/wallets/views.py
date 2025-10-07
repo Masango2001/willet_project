@@ -3,11 +3,10 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
 from decimal import Decimal
-from .models import Wallet, UTXO
-from django.shortcuts import get_object_or_404
-from .models import Wallet, Address
+from .models import Wallet, UTXO, Address
 from .serializers import WalletSerializer
 from bitcoinlib.wallets import Wallet as BTCWallet
+from .utils import get_user_wallet
 
 
 # --- Création de wallet ---
@@ -49,36 +48,18 @@ class WalletDetail(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        wallet_id = request.data.get('wallet_id')
-        if not wallet_id:
-            return Response({"error": "wallet_id is required"}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            wallet = Wallet.objects.get(id=wallet_id, user=request.user)
-        except Wallet.DoesNotExist:
-            return Response({"error": "Wallet not found"}, status=status.HTTP_404_NOT_FOUND)
+        wallet = get_user_wallet(request.user, request.data.get('wallet_id'))
         return Response(WalletSerializer(wallet).data)
 
     def put(self, request):
-        wallet_id = request.data.get('wallet_id')
-        if not wallet_id:
-            return Response({"error": "wallet_id is required"}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            wallet = Wallet.objects.get(id=wallet_id, user=request.user)
-        except Wallet.DoesNotExist:
-            return Response({"error": "Wallet not found"}, status=status.HTTP_404_NOT_FOUND)
+        wallet = get_user_wallet(request.user, request.data.get('wallet_id'))
         serializer = WalletSerializer(wallet, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)
 
     def delete(self, request):
-        wallet_id = request.data.get('wallet_id')
-        if not wallet_id:
-            return Response({"error": "wallet_id is required"}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            wallet = Wallet.objects.get(id=wallet_id, user=request.user)
-        except Wallet.DoesNotExist:
-            return Response({"error": "Wallet not found"}, status=status.HTTP_404_NOT_FOUND)
+        wallet = get_user_wallet(request.user, request.data.get('wallet_id'))
         wallet.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -88,12 +69,7 @@ class WalletBalance(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        wallet_id = request.data.get('wallet_id')
-
-        if wallet_id:
-            wallet = get_object_or_404(Wallet, id=wallet_id, user=request.user)
-        else:
-            wallet = get_object_or_404(Wallet, user=request.user, is_default=True)
+        wallet = get_user_wallet(request.user, request.data.get('wallet_id'))
 
         try:
             btc_wallet = BTCWallet(wallet.name)
@@ -102,12 +78,10 @@ class WalletBalance(APIView):
             return Response({"error": f"Bitcoinlib wallet sync failed: {str(e)}"},
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        onchain_balance = wallet.onchain_balance()
-
         return Response({
             "wallet": wallet.name,
             "current_address": wallet.current_address,
-            "onchain_balance": str(onchain_balance),
+            "onchain_balance": str(wallet.onchain_balance()),
             "lightning_balance": str(wallet.lightning_balance),
             "total_balance": str(wallet.total_balance()),
         })
@@ -118,11 +92,7 @@ class GenerateNewAddressView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        wallet_id = request.data.get("wallet_id")
-        if not wallet_id:
-            return Response({"error": "wallet_id is required"}, status=status.HTTP_400_BAD_REQUEST)
-
-        wallet = get_object_or_404(Wallet, id=wallet_id, user=request.user)
+        wallet = get_user_wallet(request.user, request.data.get("wallet_id"))
 
         try:
             btc_wallet = BTCWallet(wallet.name)
@@ -132,11 +102,9 @@ class GenerateNewAddressView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-        # Compte combien d'adresses on a déjà dans notre base
         next_index = wallet.addresses.count()
 
         try:
-            # ⚡ Génère une nouvelle clé via bitcoinlib
             key = btc_wallet.new_key()
             new_address = key.address
         except Exception as e:
@@ -145,7 +113,6 @@ class GenerateNewAddressView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-        # On enregistre dans notre modèle Django
         Address.objects.create(
             wallet=wallet,
             address=new_address,
@@ -164,32 +131,16 @@ class GenerateNewAddressView(APIView):
         }, status=status.HTTP_201_CREATED)
 
 
+# --- Synchronisation des UTXO ---
 class SyncUTXOView(APIView):
-    """
-    Synchronise les UTXO d'un wallet Bitcoin testnet via bitcoinlib
-    et les enregistre/actualise dans la base Django.
-    """
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        wallet_id = request.data.get('wallet_id')
-        if not wallet_id:
-            return Response(
-                {"error": "wallet_id is required"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # Vérifie que le wallet Django appartient bien à l'utilisateur connecté
-        wallet = get_object_or_404(Wallet, id=wallet_id, user=request.user)
+        wallet = get_user_wallet(request.user, request.data.get('wallet_id'))
 
         try:
-            # Ouvre le wallet Bitcoinlib
             btc_wallet = BTCWallet(wallet.name)
-
-            # Mets à jour les UTXOs (⚠️ sans providers)
             btc_wallet.utxos_update()
-
-            # Récupère le solde actuel
             balance = btc_wallet.balance()
         except Exception as e:
             return Response(
@@ -197,7 +148,6 @@ class SyncUTXOView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-        # Synchronise les UTXOs dans la DB Django
         synced_utxos = []
         for utxo in btc_wallet.utxos():
             obj, created = UTXO.objects.update_or_create(
@@ -205,7 +155,7 @@ class SyncUTXOView(APIView):
                 txid=utxo["txid"],
                 vout=utxo["output_n"],
                 defaults={
-                    'amount': Decimal(utxo["value"]) / Decimal("1e8"),  # satoshis → BTC
+                    'amount': Decimal(utxo["value"]) / Decimal("1e8"),
                     'confirmations': utxo.get("confirmations", 0),
                     'script_pub_key': utxo.get("script_hex", ""),
                     'spent': utxo.get("spent", False),
